@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV "/Users/sophiechoe/Health_AI/alz-classifier/venv"
+set -gx VIRTUAL_ENV "/Users/sophiechoe/Health_AI/alz-basic-advanced-classifiers/venv"
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/bin" $PATH

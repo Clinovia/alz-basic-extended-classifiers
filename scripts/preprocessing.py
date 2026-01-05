@@ -1,255 +1,205 @@
+import os
+import joblib
 import pandas as pd
 import numpy as np
+
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-import joblib
-import os
+
+
+# ============================================================
+# Utilities
+# ============================================================
+
+def collapse_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Collapse duplicated columns by taking the first non-null value row-wise.
+    Guarantees unique column names and Series-only access.
+    """
+    if not df.columns.duplicated().any():
+        return df
+
+    print("⚠️ Resolving duplicated columns...")
+
+    new_df = pd.DataFrame(index=df.index)
+
+    for col in df.columns.unique():
+        cols = df.loc[:, df.columns == col]
+
+        if cols.shape[1] == 1:
+            new_df[col] = cols.iloc[:, 0]
+        else:
+            print(f"⚠️ Collapsing duplicated column: {col}")
+            new_df[col] = cols.bfill(axis=1).iloc[:, 0]
+
+    assert not new_df.columns.duplicated().any(), "Duplicate columns remain!"
+    return new_df
+
+
+# ============================================================
+# Main loader
+# ============================================================
 
 def load_and_preprocess_adni(csv_path: str, save_dir: str = "models"):
     os.makedirs(save_dir, exist_ok=True)
 
-    # Load CSV safely
+    # =========================
+    # Load CSV
+    # =========================
     df = pd.read_csv(csv_path, low_memory=False)
+    print(f"Loaded {len(df)} total records")
 
-    # Keep only rows with baseline diagnosis
+    # =========================
+    # Keep baseline visits only
+    # =========================
+    if "VISCODE" in df.columns:
+        df = df[df["VISCODE"].astype(str).str.lower() == "bl"].copy()
+        print(f"Kept {len(df)} baseline (VISCODE='bl') records")
+
+    # =========================
+    # Unique patients
+    # =========================
+    if "RID" in df.columns:
+        df = df.drop_duplicates(subset="RID")
+        print(f"After removing duplicates by RID: {len(df)} unique patients")
+
+    # =========================
+    # Diagnosis handling
+    # =========================
+    if "DX_bl" not in df.columns:
+        raise ValueError("DX_bl column not found")
+
     df = df.dropna(subset=["DX_bl"])
-
-    # Merge SMC + LMCI → MCI
     df["DX_bl"] = df["DX_bl"].replace({"SMC": "MCI", "LMCI": "MCI"})
 
-    # Encode target
     label_map = {"CN": 0, "MCI": 1, "AD": 2}
-    df["target"] = df["DX_bl"].map(label_map)
+    df["target"] = df["DX_bl"].map(label_map).astype("Int64")
     df = df.dropna(subset=["target"])
+    df["target"] = df["target"].astype(int)
 
-    # ===== Feature Sets =====
+    # =========================
+    # Rename *_bl → base names
+    # =========================
+    df = df.rename(columns=lambda c: c.replace("_bl", ""))
+    renamed_path = os.path.join(save_dir, "adni_merge_features_renamed.csv")
+    df.to_csv(renamed_path, index=False)
+    print(f"Saved renamed dataset → {renamed_path}")
+
+    # =========================
+    # Feature definitions
+    # =========================
     basic_features = [
-        "AGE", "MMSE_bl", "CDRSB_bl", "FAQ_bl", "PTEDUCAT",
-        "PTGENDER", "APOE4"
-    ]
-    optional_features = ["RAVLT_immediate_bl", "MOCA_bl", "ADAS13_bl"]
-
-    advanced_features = basic_features + optional_features + [
-        "Hippocampus_bl", "Ventricles_bl", "WholeBrain_bl", "Entorhinal_bl",
-        "FDG_bl", "AV45_bl", "PIB_bl", "FBB_bl",
-        "ABETA_bl", "TAU_bl", "PTAU_bl", "mPACCdigit_bl", "mPACCtrailsB_bl"
-    ]
-
-    # Convert numeric columns
-    numeric_cols = basic_features + optional_features + [
-        "Hippocampus_bl", "Ventricles_bl", "WholeBrain_bl", "Entorhinal_bl",
-        "FDG_bl", "AV45_bl", "PIB_bl", "FBB_bl",
-        "ABETA_bl", "TAU_bl", "PTAU_bl", "mPACCdigit_bl", "mPACCtrailsB_bl"
-    ]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # Fill numeric missing values with median
-    df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
-
-    # Encode gender: Male=1, Female=0
-    df["PTGENDER"] = df["PTGENDER"].map({"Male": 1, "Female": 0})
-
-    # Fill missing APOE4 with -1
-    df["APOE4"] = df["APOE4"].fillna(-1)
-
-    # ===== Split Data =====
-    def split_data(features):
-        X = df[features].copy()
-        y = df["target"]
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
-        )
-        return X_train, X_test, y_train, y_test
-
-    Xb_train, Xb_test, yb_train, yb_test = split_data(basic_features + optional_features)
-    Xa_train, Xa_test, ya_train, ya_test = split_data(advanced_features)
-
-    # ===== Scale numeric features =====
-    scaler_basic = StandardScaler()
-    Xb_train_scaled = Xb_train.copy()
-    Xb_test_scaled = Xb_test.copy()
-    num_basic_cols = [c for c in Xb_train.columns if c not in ["PTGENDER", "APOE4"]]
-    Xb_train_scaled[num_basic_cols] = scaler_basic.fit_transform(Xb_train[num_basic_cols])
-    Xb_test_scaled[num_basic_cols] = scaler_basic.transform(Xb_test[num_basic_cols])
-    joblib.dump(scaler_basic, os.path.join(save_dir, "scaler_basic.pkl"))
-
-    scaler_adv = StandardScaler()
-    Xa_train_scaled = Xa_train.copy()
-    Xa_test_scaled = Xa_test.copy()
-    num_adv_cols = [c for c in Xa_train.columns if c not in ["PTGENDER", "APOE4"]]
-    Xa_train_scaled[num_adv_cols] = scaler_adv.fit_transform(Xa_train[num_adv_cols])
-    Xa_test_scaled[num_adv_cols] = scaler_adv.transform(Xa_test[num_adv_cols])
-    joblib.dump(scaler_adv, os.path.join(save_dir, "scaler_advanced.pkl"))
-
-    # ===== Save dataset sizes =====
-    sizes = {
-        "basic_train": len(Xb_train),
-        "basic_test": len(Xb_test),
-        "advanced_train": len(Xa_train),
-        "advanced_test": len(Xa_test)
-    }
-    print("Dataset sizes:", sizes)
-    joblib.dump(sizes, os.path.join(save_dir, "dataset_sizes.pkl"))
-
-    return (Xb_train_scaled, Xb_test_scaled, yb_train, yb_test), \
-           (Xa_train_scaled, Xa_test_scaled, ya_train, ya_test)
-import pandas as pd
-from sklearn.model_selection import train_test_split
-
-def load_and_preprocess_adni(csv_path: str):
-    df = pd.read_csv(csv_path)
-
-    # Drop rows without baseline diagnosis
-    df = df.dropna(subset=["DX_bl"])
-
-    # Merge classes: SMC + LMCI → MCI
-    df["DX_bl"] = df["DX_bl"].replace({"SMC": "MCI", "LMCI": "MCI"})
-
-    # Simplify gender
-    df["PTGENDER"] = df["PTGENDER"].map({"Male": 1, "Female": 0})
-
-    # Fill missing APOE4 with -1 (unknown)
-    df["APOE4"] = df["APOE4"].fillna(-1)
-
-    # ===== BASIC FEATURES =====
-    basic_features = [
-        "AGE", "MMSE", "CDRSB", "FAQ", "PTEDUCAT",
-        "PTGENDER", "APOE4"
-    ]
-    
-    # Optional but helpful neuropsych measures
-    optional_features = [
+        "AGE", "MMSE", "FAQ", "PTEDUCAT",
+        "PTGENDER", "APOE4",
         "RAVLT_immediate", "MOCA", "ADAS13"
     ]
 
-    # ===== ADVANCED FEATURES =====
-    advanced_features = basic_features + optional_features + [
+    advanced_features = basic_features + [
         "Hippocampus", "Ventricles", "WholeBrain", "Entorhinal",
         "FDG", "AV45", "PIB", "FBB",
-        "ABETA", "TAU", "PTAU", "mPACCdigit", "mPACCtrailsB"
+        "ABETA", "TAU", "PTAU",
+        "mPACCdigit", "mPACCtrailsB"
     ]
 
-    df_basic = df[basic_features + ["DX_bl"]].copy()
-    df_advanced = df[advanced_features + ["DX_bl"]].copy()
+    # =========================
+    # Collapse duplicated columns EARLY
+    # =========================
+    df = collapse_duplicate_columns(df)
 
-    # Handle missing values
-    df_basic = df_basic.fillna(df_basic.median(numeric_only=True))
-    df_advanced = df_advanced.fillna(df_advanced.median(numeric_only=True))
-
-    # Encode target variable
-    label_map = {"CN": 0, "MCI": 1, "AD": 2}
-import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-import joblib
-import os
-
-def load_and_preprocess_adni(csv_path: str, save_dir: str = "models"):
-    os.makedirs(save_dir, exist_ok=True)
-
-    # Load CSV safely
-    df = pd.read_csv(csv_path, low_memory=False)
-
-    # Keep only rows with baseline diagnosis
-    df = df.dropna(subset=["DX_bl"])
-
-    # Merge SMC + LMCI → MCI
-    df["DX_bl"] = df["DX_bl"].replace({"SMC": "MCI", "LMCI": "MCI"})
-
-    # Encode target
-    label_map = {"CN": 0, "MCI": 1, "AD": 2}
-    df["target"] = df["DX_bl"].map(label_map)
-    df = df.dropna(subset=["target"])
-
-    # ===== Feature Sets =====
-    basic_features = [
-        "AGE", "MMSE_bl", "CDRSB_bl", "FAQ_bl", "PTEDUCAT",
-        "PTGENDER", "APOE4"
-    ]
-    optional_features = ["RAVLT_immediate_bl", "MOCA_bl", "ADAS13_bl"]
-
-    advanced_features = basic_features + optional_features + [
-        "Hippocampus_bl", "Ventricles_bl", "WholeBrain_bl", "Entorhinal_bl",
-        "FDG_bl", "AV45_bl", "PIB_bl", "FBB_bl",
-        "ABETA_bl", "TAU_bl", "PTAU_bl", "mPACCdigit_bl", "mPACCtrailsB_bl"
+    # =========================
+    # Numeric coercion (ADNI-safe)
+    # =========================
+    numeric_cols = [
+        c for c in advanced_features
+        if c in df.columns and c not in ["PTGENDER"]
     ]
 
-    # Convert numeric columns
-    numeric_cols = basic_features + optional_features + [
-        "Hippocampus_bl", "Ventricles_bl", "WholeBrain_bl", "Entorhinal_bl",
-        "FDG_bl", "AV45_bl", "PIB_bl", "FBB_bl",
-        "ABETA_bl", "TAU_bl", "PTAU_bl", "mPACCdigit_bl", "mPACCtrailsB_bl"
-    ]
+    print(f"Numeric columns ({len(numeric_cols)}): {numeric_cols}")
+
     for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        if df[col].isna().any():
+            df[col] = df[col].fillna(df[col].median())
 
-    # Fill numeric missing values with median
-    df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
-
-    # Encode gender: Male=1, Female=0
-    df["PTGENDER"] = df["PTGENDER"].map({"Male": 1, "Female": 0})
-
-    # Fill missing APOE4 with -1
-    df["APOE4"] = df["APOE4"].fillna(-1)
-
-    # ===== Split Data =====
-    def split_data(features):
-        X = df[features].copy()
-        y = df["target"]
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
+    # =========================
+    # Categorical encoding
+    # =========================
+    if "PTGENDER" in df.columns:
+        df["PTGENDER"] = (
+            df["PTGENDER"]
+            .map({"Male": 1, "Female": 0})
+            .fillna(0)
+            .astype(int)
         )
+
+    if "APOE4" in df.columns:
+        df["APOE4"] = (
+            pd.to_numeric(df["APOE4"], errors="coerce")
+            .fillna(-1)
+            .astype(int)
+        )
+
+    # =========================
+    # Train / test split helper
+    # =========================
+    def split_data(feature_list):
+        features = [f for f in feature_list if f in df.columns]
+        if not features:
+            raise ValueError(f"No valid features found: {feature_list}")
+
+        X = df[features].copy()
+        y = df["target"].copy()
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y,
+            test_size=0.2,
+            random_state=42,
+            stratify=y
+        )
+
+        print(f"Split → Train: {len(X_train)}, Test: {len(X_test)}")
         return X_train, X_test, y_train, y_test
 
-    Xb_train, Xb_test, yb_train, yb_test = split_data(basic_features + optional_features)
+    Xb_train, Xb_test, yb_train, yb_test = split_data(basic_features)
     Xa_train, Xa_test, ya_train, ya_test = split_data(advanced_features)
 
-    # ===== Scale numeric features =====
-    scaler_basic = StandardScaler()
-    Xb_train_scaled = Xb_train.copy()
-    Xb_test_scaled = Xb_test.copy()
-    num_basic_cols = [c for c in Xb_train.columns if c not in ["PTGENDER", "APOE4"]]
-    Xb_train_scaled[num_basic_cols] = scaler_basic.fit_transform(Xb_train[num_basic_cols])
-    Xb_test_scaled[num_basic_cols] = scaler_basic.transform(Xb_test[num_basic_cols])
-    joblib.dump(scaler_basic, os.path.join(save_dir, "scaler_basic.pkl"))
+    # =========================
+    # Scaling (tree-safe)
+    # =========================
+    def scale_and_save(X_train, X_test, name):
+        scaler = StandardScaler()
+        X_train_s = X_train.copy()
+        X_test_s = X_test.copy()
 
-    scaler_adv = StandardScaler()
-    Xa_train_scaled = Xa_train.copy()
-    Xa_test_scaled = Xa_test.copy()
-    num_adv_cols = [c for c in Xa_train.columns if c not in ["PTGENDER", "APOE4"]]
-    Xa_train_scaled[num_adv_cols] = scaler_adv.fit_transform(Xa_train[num_adv_cols])
-    Xa_test_scaled[num_adv_cols] = scaler_adv.transform(Xa_test[num_adv_cols])
-    joblib.dump(scaler_adv, os.path.join(save_dir, "scaler_advanced.pkl"))
+        num_cols = [c for c in X_train.columns if c not in ["PTGENDER", "APOE4"]]
 
-    # ===== Save dataset sizes =====
-    sizes = {
-        "basic_train": len(Xb_train),
-        "basic_test": len(Xb_test),
-        "advanced_train": len(Xa_train),
-        "advanced_test": len(Xa_test)
-    }
-    print("Dataset sizes:", sizes)
-    joblib.dump(sizes, os.path.join(save_dir, "dataset_sizes.pkl"))
+        if num_cols:
+            X_train_s[num_cols] = scaler.fit_transform(X_train[num_cols])
+            X_test_s[num_cols] = scaler.transform(X_test[num_cols])
 
-    return (Xb_train_scaled, Xb_test_scaled, yb_train, yb_test), \
-           (Xa_train_scaled, Xa_test_scaled, ya_train, ya_test)
-    df_basic["target"] = df_basic["DX_bl"].map(label_map)
-    df_advanced["target"] = df_advanced["DX_bl"].map(label_map)
+        scaler_path = os.path.join(save_dir, f"{name}.pkl")
+        joblib.dump(scaler, scaler_path)
+        print(f"Saved scaler → {scaler_path}")
 
-    # Train-test split
-    Xb_train, Xb_test, yb_train, yb_test = train_test_split(
-        df_basic.drop(columns=["DX_bl", "target"]),
-        df_basic["target"], test_size=0.2, random_state=42, stratify=df_basic["target"]
+        return X_train_s, X_test_s
+
+    Xb_train_s, Xb_test_s = scale_and_save(Xb_train, Xb_test, "scaler_basic")
+    Xa_train_s, Xa_test_s = scale_and_save(Xa_train, Xa_test, "scaler_advanced")
+
+    # =========================
+    # Save feature lists
+    # =========================
+    joblib.dump(list(Xb_train_s.columns), os.path.join(save_dir, "basic_features.pkl"))
+    joblib.dump(list(Xa_train_s.columns), os.path.join(save_dir, "advanced_features.pkl"))
+
+    print(f"Saved {len(Xb_train_s.columns)} basic features")
+    print(f"Saved {len(Xa_train_s.columns)} advanced features")
+
+    # =========================
+    # Return
+    # =========================
+    return (
+        Xb_train_s, Xb_test_s, yb_train, yb_test
+    ), (
+        Xa_train_s, Xa_test_s, ya_train, ya_test
     )
-
-    Xa_train, Xa_test, ya_train, ya_test = train_test_split(
-        df_advanced.drop(columns=["DX_bl", "target"]),
-        df_advanced["target"], test_size=0.2, random_state=42, stratify=df_advanced["target"]
-    )
-
-    return (Xb_train, Xb_test, yb_train, yb_test), (Xa_train, Xa_test, ya_train, ya_test)
-

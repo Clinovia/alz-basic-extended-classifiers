@@ -1,4 +1,4 @@
-#!/Users/sophiechoe/Health_AI/alz-classifier/venv/bin/python
+#!/Users/sophiechoe/Health_AI/alz-basic-advanced-classifiers/venv/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys
