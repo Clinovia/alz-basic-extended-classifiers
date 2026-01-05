@@ -8,23 +8,20 @@ Saved 40 advanced features
 
 ================ BASIC FEATURE SET ================
 
-🔹 Training LogisticRegression (Basic)...
-/Users/sophiechoe/Health_AI/alz-basic-advanced-classifiers/venv/lib/python3.12/site-packages/sklearn/linear_model/_logistic.py:1272: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.8. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
-  warnings.warn(
 LogisticRegression (Basic) Classification Report:
               precision    recall  f1-score   support
 
-          CN       0.55      0.87      0.68       109
-         MCI       0.82      0.55      0.66       209
+          CN       0.55      0.87      0.67       109
+         MCI       0.81      0.55      0.65       209
           AD       0.80      0.85      0.83        82
 
     accuracy                           0.70       400
    macro avg       0.72      0.76      0.72       400
-weighted avg       0.74      0.70      0.70       400
+weighted avg       0.74      0.70      0.69       400
 
 Sensitivity & Specificity:
-CN: Sensitivity=0.872, Specificity=0.735
-MCI: Sensitivity=0.550, Specificity=0.864
+CN: Sensitivity=0.872, Specificity=0.732
+MCI: Sensitivity=0.545, Specificity=0.864
 AD: Sensitivity=0.854, Specificity=0.947
 
 Saved model → models/basic_logisticregression.pkl
@@ -33,20 +30,39 @@ Saved model → models/basic_logisticregression.pkl
 RandomForest (Basic) Classification Report:
               precision    recall  f1-score   support
 
-          CN       0.63      0.57      0.60       109
-         MCI       0.72      0.78      0.75       209
-          AD       0.88      0.82      0.85        82
+          CN       0.65      0.59      0.62       109
+         MCI       0.73      0.79      0.76       209
+          AD       0.88      0.80      0.84        82
 
-    accuracy                           0.73       400
-   macro avg       0.74      0.72      0.73       400
-weighted avg       0.73      0.73      0.73       400
+    accuracy                           0.74       400
+   macro avg       0.75      0.73      0.74       400
+weighted avg       0.74      0.74      0.74       400
 
 Sensitivity & Specificity:
-CN: Sensitivity=0.569, Specificity=0.873
-MCI: Sensitivity=0.780, Specificity=0.675
-AD: Sensitivity=0.817, Specificity=0.972
+CN: Sensitivity=0.587, Specificity=0.880
+MCI: Sensitivity=0.789, Specificity=0.681
+AD: Sensitivity=0.805, Specificity=0.972
 
 Saved model → models/basic_randomforest.pkl
+
+🔹 Training XGBoost (Basic)...
+XGBoost (Basic) Classification Report:
+              precision    recall  f1-score   support
+
+          CN       0.61      0.62      0.62       109
+         MCI       0.72      0.74      0.73       209
+          AD       0.86      0.78      0.82        82
+
+    accuracy                           0.72       400
+   macro avg       0.73      0.72      0.72       400
+weighted avg       0.72      0.72      0.72       400
+
+Sensitivity & Specificity:
+CN: Sensitivity=0.624, Specificity=0.849
+MCI: Sensitivity=0.742, Specificity=0.691
+AD: Sensitivity=0.780, Specificity=0.969
+
+Saved model → models/basic_xgboost.pkl
 """
 
 import joblib
